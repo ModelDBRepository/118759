@@ -1,0 +1,217 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%                                                                                        %
+%  Modeling of Ca-dependent inactivation by changing Ca affinity of the pore             %
+%                                                                                        %
+%  Roman Shirokov, UMDNJ, Victor Matveev, NJIT                                           %
+%  January, 2006                                                                         %
+%                                                                                        %
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%                                                  %
+%                  PARAMETERS                      %
+%                                                  %
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%---- Charge1 - Charge2 parameters-------------
+V1 = -10; V2 = -110; K = 8      % mV 
+
+a1 = 0.3; a2 =0.0033             % ms^-1, parameters "a" and "b" are used to define 
+b = 0.1                          % voltage-dependent rates of Charge1 and Charge2 movements
+
+tauIna = 2000                % ms,  onset of inactivation without Ca
+extIna = 5                   % extent of inactivation without Ca, extIna=1/K.A in the paper
+tauRec = 100                 % ms,  recovery from inactivation without Ca
+
+kIna = 1 / tauIna                % ms^-1, rate of inactivation without Ca
+kRec = 1 / tauRec                % ms^-1, rate of recovery without Ca  
+
+extRec = extIna exp((V2 - V1)/K) % extent of recovery without Ca, extRec=1/K.R in the paper
+                                 
+%-----Whole-cell parameters--------------------
+Cm = 20                                 % pF, cell capacitance
+Rs = 5                                 % MOhm, series resistance
+CHD = 500                               % pF^-1, density of channels 
+Nch = Cm CHD
+
+%-----Ca parameters----------------------------
+Ca.out = 10000                          % microM, concentration of extracellular Ca
+Ca.in  = 0.1                            % microM, concentration of intracellular Ca
+ECa    = 12.5 log( Ca.out/Ca.in )       % mV, equilibrium potential for Ca
+
+X      = 0.08      % i.s.ch scaling factor for GHK to make i.s.ch=0.5pA at 0mV 10Ca.out
+Y      = 0.008     % i.s.ch scaling factor for Ohmic to make i.s.ch=0.5pA at 0mV 10Ca.out 
+
+%-----Ca binding to inactivation  site--------
+k.on   = 0.1                            % microM^-1 ms^-1, the ON rate for Ca
+delta  = 0.5                            % electrical position of the binding site 
+Kd     = 10000                          % microM, dissociation constant of the site
+
+Gamma  = 50          % extent of enhancement of inactivation by Ca
+                     % it is the same as extent of reduction of Kd in inactivated channels  
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%                                                  %
+%                 RATE CONSTANTS                   %
+%                                                  %
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+k.RP.AP     := a1 exp( (V - V1) / (2 K) - b ( (V - V1) / (2 K) )^2 )   
+k.AP.RP     := k.RP.AP exp( (V1 - V) / K )
+
+k.RI.AI     := a2 exp( (V - V2) / (2 K) - b ( (V - V2) / (2 K) )^2 )
+k.AI.RI     := k.RI.AI exp( (V2 - V) / K )
+
+% To limit the rate increase, 
+% the free energy difference between starting and transitional states 
+% is assumed to be a second order function of voltage 
+% (as done by Simon & Beam, 1985. J Gen Physiol, 85, 21-42.)
+
+k.AI.AP      = kIna / (1 + extIna )  
+k.AP.AI      = kIna - k.AI.AP 
+
+k.RI.RP      = kRec / (1 + extRec ) 
+k.RP.RI      = kRec - k.RI.RP
+
+
+Kd.eff := Kd exp(delta V/12.5) (1+exp(-V/25)) / (1+exp((V - 2 ECa)/25))
+
+PoCa:= 1 / ( 1 + (Kd.eff/Ca.out) )
+
+PiCa:= 1 / ( 1 + (Kd.eff/(Gamma Ca.out)) )
+
+PinnCa = 1 / ( 1 + (Kd/(Gamma Ca.out)) )
+
+PcCa = 1 / ( 1 + (Kd/Ca.out) )
+
+
+k.RPCa.APCa := k.RP.AP        
+k.APCa.RPCa := k.AP.RP      
+
+k.APCa.AICa  = k.AP.AI Gamma
+k.AICa.APCa  = k.AI.AP
+
+k.RICa.AICa := k.RI.AI        
+k.AICa.RICa := k.AI.RI        
+
+k.RPCa.RICa  = k.RP.RI Gamma
+k.RICa.RPCa  = k.RI.RP
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%                                                  %
+%                KINETIC SCHEMA                    %
+%                                                  %
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+AP    := O ( 1 - PoCa )
+APCa  := O PoCa
+
+F.O   :=(-k.AP.RP     -k.AP.AI     ) AP   +k.RP.AP     RP   +k.AI.AP     AI   ...
+       +(-k.APCa.RPCa -k.APCa.AICa ) APCa +k.RPCa.APCa RPCa +k.AICa.APCa AICa 
+
+AI    := In ( 1 - PiCa )
+AICa  := In PiCa
+
+F.In  :=(-k.AI.AP     -k.AI.RI     ) AI   +k.AP.AI     AP   +k.RI.AI     RI   ...
+       +(-k.AICa.APCa -k.AICa.RICa ) AICa +k.APCa.AICa APCa +k.RICa.AICa RICa
+
+RI    := Inn (1 - PinnCa)
+RICa  := Inn PinnCa
+
+F.Inn :=(-k.RI.AI     -k.RI.RP     ) RI   +k.RP.RI     RP   +k.AI.RI     AI  ...
+       +(-k.RICa.AICa -k.RICa.RPCa ) RICa +k.AICa.RICa AICa +k.RPCa.RICa RPCa
+
+
+C    := 1 - AP - APCa - AI - AICa - RI - RICa     
+RP   := C / (1 + PcCa)
+RPCa := C PcCa / (1 + PcCa)
+
+dO/dt    = F.O
+dIn/dt   = F.In
+dInn/dt = F.Inn
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%                                                  %
+%          EFFECT OF CURRENT ON VOLTAGE            %
+%                                                  %
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+dV/dt = (Vf - V) / (0.001 * Cm * Rs) - I.total / Cm   % t in ms, I in pA, V in mV, 
+                                                      % Cm in pF, Rs in MOhm 
+V(0) = -100
+
+%pseudo-GHK:
+%i.ghk  := X 12.5 (Ca.in - Ca.out) / (Ca.out + Kd) (V == 0) + ...
+%          X (V/(1-exp(-V/12.5))) (Ca.in - Ca.out exp(-V/12.5)) / (Ca.out + Kd) 
+%
+%I.ionic  := Nch O i.ghk
+%%%
+
+%pseudo-Ohmic:
+%i.ohm   := Y (V-ECa) (Ca.out-Ca.in) / (Ca.out + Kd)
+%
+%I.ionic := Nch O i.s.ch
+%%%
+
+%Single site a la Woodhull:
+i.s.ch.P := ... 
+ 2 1.6 0.0001 ( k.on Ca.in exp((1-delta) V/25) - k.on Ca.out exp(-delta V/25) ) (1-PoCa)
+
+i.s.ch.I := ...
+ 2 1.6 0.0001 ( k.on Ca.in exp((1-delta) V/25) - k.on Ca.out exp(-delta V/25) ) (1-PiCa)
+
+i.P := Nch AP i.s.ch.P
+i.I := Nch AI i.s.ch.I
+
+I.ionic := i.P + i.I
+%%%
+
+I.gating := Nch 25 1.6 0.0001 (F.O + F.In) / K 
+
+I.total  := I.gating + I.ionic
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%                                                  %
+%                  SOLVING                         %
+%                                                  %
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+mode = ODE
+verbose=0                   % removes console output for speed, comment it out to compile  
+
+
+run T
+C(0) = 1
+
+
+for Pulse = 0 to 20 step 1
+
+        Vp = -100 + 10 Pulse
+  
+	if Pulse == 0 then
+  	Vf = - 100
+  	T = 5000                        % equilibration time,  ms           
+  	Export T "save.dat" 
+	
+
+	else
+  	Import "save.dat"
+  	Vf := (-100 - Vp) * (t > 300) + Vp   
+  	T = 320
+  	plot mute I.total "I" Vp 
+%  	plot mute i.P "IP" Vp    	%this could work only for the Woodhul formulation
+%  	plot mute i.I "II" Vp    	%this could work only for the Woodhul formulation
+  	plot mute V "V" Vp 
+        
+        endif
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%                                                  %
+%                  THE   END                       %
+%                                                  %
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
